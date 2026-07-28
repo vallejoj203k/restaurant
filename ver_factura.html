@@ -1,0 +1,413 @@
+{% extends "base.html" %}
+
+{% block title %}Factura {{ factura.numero_consecutivo }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4 d-print-none">
+
+    <!-- BARRA DE ACCIONES -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div class="d-flex gap-2">
+            <a href="{{ url_for('lista_facturas') }}" class="btn btn-secondary">
+                <i class="fas fa-arrow-left"></i> Volver
+            </a>
+            {% if factura.sesion %}
+            <a href="{{ url_for('ver_mesa', mesa_id=factura.sesion.mesa_id) }}" class="btn btn-outline-primary">
+                <i class="fas fa-chair"></i> Ver Mesa
+            </a>
+            {% else %}
+                {% set domicilio = factura.domicilios.first() if factura.domicilios else None %}
+                {% if domicilio %}
+                <a href="{{ url_for('ver_domicilio', domicilio_id=domicilio.id) }}" class="btn btn-outline-primary">
+                    <i class="fas fa-motorcycle"></i> Ver Domicilio
+                </a>
+                {% endif %}
+            {% endif %}
+        </div>
+        <div class="d-flex gap-2">
+            {% if current_user.rol == 'admin' %}
+            <a href="{{ url_for('editar_factura', factura_id=factura.id) }}" class="btn btn-warning">
+                <i class="fas fa-edit"></i> Editar
+            </a>
+            {% endif %}
+            <button onclick="window.print()" class="btn btn-success">
+                <i class="fas fa-print"></i> Imprimir
+            </button>
+            {% if current_user.rol == 'admin' %}
+            <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#modalEliminarFactura">
+                <i class="fas fa-trash"></i> Eliminar
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- VISTA MODERNA EN PANTALLA -->
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+
+            <!-- CABECERA FACTURA -->
+            <div class="card shadow-sm mb-3">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-7">
+                            <h4 class="fw-bold mb-1">{{ config.nombre }}</h4>
+                            <p class="text-muted mb-0 small">NIT: {{ config.nit }}</p>
+                            <p class="text-muted mb-0 small">{{ config.direccion }}, {{ config.ciudad }}</p>
+                            <p class="text-muted mb-0 small">Tel: {{ config.telefono }}</p>
+                        </div>
+                        <div class="col-md-5 text-md-end mt-3 mt-md-0">
+                            <h5 class="text-primary fw-bold mb-1">FACTURA DE VENTA</h5>
+                            <h6 class="fw-bold mb-1">{{ factura.numero_consecutivo }}</h6>
+                            <p class="text-muted mb-0 small">{{ factura.fecha_emision.strftime('%d/%m/%Y %I:%M %p') }}</p>
+                            {% if factura.estado_pago == 'pagada' %}
+                            <span class="badge bg-success fs-6 mt-1">PAGADA</span>
+                            {% elif factura.estado_pago == 'pendiente' %}
+                            <span class="badge bg-warning fs-6 mt-1">PENDIENTE</span>
+                            {% elif factura.estado_pago == 'vencida' %}
+                            <span class="badge bg-danger fs-6 mt-1">VENCIDA</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TIPO Y CLIENTE -->
+            <div class="card shadow-sm mb-3">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p class="text-muted small mb-1">TIPO</p>
+                            {% if factura.sesion %}
+                            <p class="fw-bold mb-0"><i class="fas fa-chair text-primary"></i> {{ factura.sesion.mesa.display_name }}</p>
+                            {% elif factura.domicilios.first() %}
+                            <p class="fw-bold mb-0"><i class="fas fa-motorcycle text-primary"></i> Domicilio #{{ factura.domicilios.first().id }}</p>
+                            {% else %}
+                            <p class="fw-bold mb-0"><i class="fas fa-file-alt text-primary"></i> Factura Manual / Histórica</p>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6 mt-3 mt-md-0">
+                            <p class="text-muted small mb-1">CLIENTE</p>
+                            <p class="fw-bold mb-0">{{ factura.cliente_nombre or 'Consumidor Final' }}</p>
+                            {% if factura.cliente_documento %}
+                            <p class="text-muted small mb-0">CC/NIT: {{ factura.cliente_documento }}</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PRODUCTOS / DETALLE -->
+            <div class="card shadow-sm mb-3">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0 fw-bold"><i class="fas fa-list"></i> Detalle</h6>
+                </div>
+                <div class="card-body p-0">
+                    {% if factura.sesion %}
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Producto</th>
+                                <th class="text-center">Cant.</th>
+                                <th class="text-end">Valor</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for pedido in factura.sesion.pedidos %}
+                            <tr>
+                                <td>{{ pedido.producto }}{% if pedido.notas %}<br><small class="text-muted">{{ pedido.notas }}</small>{% endif %}</td>
+                                <td class="text-center">{{ pedido.cantidad }}</td>
+                                <td class="text-end">${{ "{:,.0f}".format(pedido.total) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                        {% set domicilio = factura.domicilios.first() if factura.domicilios else None %}
+                        {% if domicilio %}
+                        <table class="table table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Producto</th>
+                                    <th class="text-center">Cant.</th>
+                                    <th class="text-end">Valor</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in domicilio.items %}
+                                <tr>
+                                    <td>{{ item.producto_nombre }}{% if item.notas %}<br><small class="text-muted">{{ item.notas }}</small>{% endif %}</td>
+                                    <td class="text-center">{{ item.cantidad }}</td>
+                                    <td class="text-end">${{ "{:,.0f}".format(item.subtotal) }}</td>
+                                </tr>
+                                {% endfor %}
+                                <tr class="table-light">
+                                    <td><em>Costo de domicilio</em></td>
+                                    <td class="text-center">1</td>
+                                    <td class="text-end">${{ "{:,.0f}".format(domicilio.costo_domicilio) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        {% else %}
+                        <!-- FACTURA MANUAL -->
+                        <div class="p-4 text-center">
+                            <i class="fas fa-file-invoice-dollar fa-3x text-muted mb-3"></i>
+                            <p class="fw-bold mb-1">Ingreso global registrado</p>
+                            {% if factura.notas %}
+                            <p class="text-muted mb-0">{{ factura.notas }}</p>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- TOTALES Y PAGO -->
+            <div class="card shadow-sm mb-3">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p class="text-muted small mb-1">MÉTODO DE PAGO</p>
+                            <p class="fw-bold mb-0">
+                                <i class="fas fa-credit-card text-primary"></i>
+                                {{ factura.metodo_pago|upper }}
+                            </p>
+                            {% if desglose %}
+                            <div class="mt-2 small text-muted">
+                                {% if desglose.efectivo %}<p class="mb-0">Efectivo: ${{ "{:,.0f}".format(desglose.efectivo) }}</p>{% endif %}
+                                {% if desglose.tarjeta %}<p class="mb-0">Tarjeta: ${{ "{:,.0f}".format(desglose.tarjeta) }}</p>{% endif %}
+                                {% if desglose.transferencia %}<p class="mb-0">Transferencia: ${{ "{:,.0f}".format(desglose.transferencia) }}</p>{% endif %}
+                            </div>
+                            {% endif %}
+                            {% if factura.estado_pago == 'pendiente' and factura.fecha_vencimiento %}
+                            <p class="text-danger small mt-1 mb-0"><i class="fas fa-clock"></i> Vence: {{ factura.fecha_vencimiento.strftime('%d/%m/%Y') }}</p>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6 mt-3 mt-md-0">
+                            <table class="table table-sm mb-0">
+                                {% if factura.subtotal != factura.total %}
+                                <tr>
+                                    <td class="text-muted">Subtotal</td>
+                                    <td class="text-end">${{ "{:,.0f}".format(factura.subtotal) }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if factura.iva > 0 %}
+                                <tr>
+                                    <td class="text-muted">IVA</td>
+                                    <td class="text-end">${{ "{:,.0f}".format(factura.iva) }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if factura.propina > 0 %}
+                                <tr>
+                                    <td class="text-muted">Propina</td>
+                                    <td class="text-end">${{ "{:,.0f}".format(factura.propina) }}</td>
+                                </tr>
+                                {% endif %}
+                                <tr class="fw-bold fs-5 border-top">
+                                    <td>TOTAL</td>
+                                    <td class="text-end text-success">${{ "{:,.0f}".format(factura.total) }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if factura.notas and (factura.sesion or factura.domicilios.first()) %}
+            <div class="card shadow-sm mb-3">
+                <div class="card-body">
+                    <p class="text-muted small mb-1">NOTAS</p>
+                    <p class="mb-0">{{ factura.notas }}</p>
+                </div>
+            </div>
+            {% endif %}
+
+        </div>
+    </div>
+</div>
+
+<!-- RECIBO TÉRMICO (solo al imprimir) -->
+<div class="factura-termica d-none d-print-block">
+    <div class="text-center mb-2">
+        <h3 class="mb-1">{{ config.nombre }}</h3>
+        <p class="mb-0 small">NIT: {{ config.nit }}</p>
+        <p class="mb-0 small">{{ config.direccion }}</p>
+        <p class="mb-0 small">{{ config.ciudad }}</p>
+        <p class="mb-0 small">Tel: {{ config.telefono }}</p>
+        {% if config.email %}<p class="mb-0 small">{{ config.email }}</p>{% endif %}
+        <p class="mb-0 small">{{ config.regimen }}</p>
+    </div>
+    <div class="separador"></div>
+    <div class="text-center mb-2">
+        <h4 class="mb-1">FACTURA DE VENTA</h4>
+        <p class="mb-0"><strong>No. {{ factura.numero_consecutivo }}</strong></p>
+        <p class="mb-0 small">{{ factura.fecha_emision.strftime('%d/%m/%Y %I:%M %p') }}</p>
+        {% if factura.sesion %}<p class="mb-0 small">{{ factura.sesion.mesa.display_name }}</p>
+        {% elif factura.domicilios.first() %}<p class="mb-0 small">DOMICILIO</p>
+        {% else %}<p class="mb-0 small">FACTURA MANUAL</p>{% endif %}
+    </div>
+    <div class="separador"></div>
+    {% if factura.cliente_nombre %}
+    <div class="mb-2">
+        <p class="mb-0 small"><strong>CLIENTE:</strong> {{ factura.cliente_nombre }}</p>
+        {% if factura.cliente_documento %}<p class="mb-0 small">CC/NIT: {{ factura.cliente_documento }}</p>{% endif %}
+    </div>
+    <div class="separador"></div>
+    {% endif %}
+    <div class="mb-2">
+        <table class="tabla-items">
+            <colgroup><col class="col-item"><col class="col-cant"><col class="col-precio"></colgroup>
+            <thead><tr><th>ITEM</th><th class="text-center">U</th><th class="text-right">$</th></tr></thead>
+            <tbody>
+                {% if factura.sesion %}
+                    {% for pedido in factura.sesion.pedidos %}
+                    <tr><td>{{ pedido.producto }}</td><td class="text-center">{{ pedido.cantidad }}</td><td class="text-right">${{ "{:,.0f}".format(pedido.total) }}</td></tr>
+                    {% endfor %}
+                {% else %}
+                    {% set domicilio = factura.domicilios.first() if factura.domicilios else None %}
+                    {% if domicilio %}
+                        {% for item in domicilio.items %}
+                        <tr><td>{{ item.producto_nombre }}</td><td class="text-center">{{ item.cantidad }}</td><td class="text-right">${{ "{:,.0f}".format(item.subtotal) }}</td></tr>
+                        {% endfor %}
+                        <tr><td>Domicilio</td><td class="text-center">1</td><td class="text-right">${{ "{:,.0f}".format(domicilio.costo_domicilio) }}</td></tr>
+                    {% else %}
+                        <tr><td colspan="3">{{ factura.notas or 'Ingreso global' }}</td></tr>
+                    {% endif %}
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    <div class="separador"></div>
+    <div class="mb-2">
+        <table class="tabla-totales">
+            {% if factura.propina > 0 %}<tr><td class="text-right">Propina:</td><td class="text-right">${{ "{:,.0f}".format(factura.propina) }}</td></tr>{% endif %}
+            <tr class="total-final"><td class="text-right"><strong>TOTAL:</strong></td><td class="text-right"><strong>${{ "{:,.0f}".format(factura.total) }}</strong></td></tr>
+        </table>
+    </div>
+    <div class="separador"></div>
+    <div class="mb-2">
+        <p class="mb-0 small"><strong>PAGO:</strong> {{ factura.metodo_pago|upper }}</p>
+        {% if factura.estado_pago == 'pagada' %}<p class="mb-0 small"><strong>PAGADO</strong></p>{% endif %}
+    </div>
+    <div class="separador"></div>
+    <div class="text-center mb-2">
+        <p class="mb-0 small">¡GRACIAS POR SU COMPRA!</p>
+        <p class="mb-0 small">Vuelva Pronto</p>
+    </div>
+    <div class="separador-doble"></div>
+    <div class="corte"></div>
+</div>
+
+<!-- Modal Eliminar -->
+{% if current_user.rol == 'admin' %}
+<div class="modal fade" id="modalEliminarFactura" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="fas fa-exclamation-triangle"></i> Confirmar Eliminación</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p><strong>Factura:</strong> {{ factura.numero_consecutivo }}</p>
+                <p><strong>Total:</strong> <span class="text-success fw-bold">${{ "{:,.0f}".format(factura.total) }}</span></p>
+                <p><strong>Fecha:</strong> {{ factura.fecha_emision.strftime('%d/%m/%Y') }}</p>
+                <div class="alert alert-danger mb-0">
+                    <strong>Esta acción es irreversible.</strong> La factura se eliminará de los reportes de ingresos.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <form method="POST" action="{{ url_for('eliminar_factura', factura_id=factura.id) }}" style="display:inline;">
+                    <button type="submit" class="btn btn-danger"><i class="fas fa-trash"></i> Eliminar</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<style>
+@page {
+    size: 58mm auto;
+    margin: 0;
+}
+@media print {
+    html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 58mm !important;
+        background: #fff !important;
+    }
+    /* Ocultar todo excepto el recibo térmico */
+    .navbar, .d-print-none, .modal, header, nav { display: none !important; }
+
+    /* Recibo térmico 58mm */
+    .factura-termica {
+        display: block !important;
+        width: 54mm !important;
+        max-width: 54mm !important;
+        margin: 0 auto !important;
+        padding: 1mm 0 !important;
+        box-shadow: none !important;
+        font-family: 'Courier New', Courier, monospace !important;
+        font-size: 9px !important;
+        line-height: 1.25 !important;
+        color: #000 !important;
+        background: #fff !important;
+        word-wrap: break-word !important;
+        overflow-wrap: break-word !important;
+    }
+    * { color: #000 !important; background: #fff !important; box-shadow: none !important; }
+
+    /* Encabezado */
+    .factura-termica h3 { font-size: 11px !important; font-weight: bold; margin: 1px 0 2px; text-align: center; }
+    .factura-termica h4 { font-size: 10px !important; font-weight: bold; margin: 1px 0; text-align: center; }
+    .factura-termica p  { font-size: 9px !important; margin: 0 0 1px; }
+    .factura-termica small { font-size: 8px !important; }
+
+    /* Separadores */
+    .separador       { border-top: 1px dashed #000 !important; margin: 3px 0 !important; }
+    .separador-doble { border-top: 2px solid #000 !important;  margin: 3px 0 !important; }
+
+    /* Tabla de ítems */
+    .tabla-items {
+        width: 100% !important;
+        font-size: 9px !important;
+        border-collapse: collapse !important;
+        table-layout: fixed !important;
+    }
+    .tabla-items col.col-item   { width: 55% !important; }
+    .tabla-items col.col-cant   { width: 15% !important; }
+    .tabla-items col.col-precio { width: 30% !important; }
+    .tabla-items th {
+        font-size: 8px !important;
+        font-weight: bold !important;
+        border-bottom: 1px solid #000 !important;
+        padding: 2px 1px !important;
+        text-align: left !important;
+    }
+    .tabla-items th.text-right,
+    .tabla-items td.text-right { text-align: right !important; }
+    .tabla-items th.text-center,
+    .tabla-items td.text-center { text-align: center !important; }
+    .tabla-items td {
+        padding: 2px 1px !important;
+        vertical-align: top !important;
+        word-break: break-word !important;
+        font-size: 9px !important;
+    }
+
+    /* Tabla de totales */
+    .tabla-totales { width: 100% !important; font-size: 9px !important; }
+    .tabla-totales td { padding: 1px 1px !important; }
+    .total-final {
+        border-top: 1px solid #000 !important;
+        border-bottom: 1px solid #000 !important;
+        font-size: 11px !important;
+        font-weight: bold !important;
+    }
+
+    /* Espacio de corte */
+    .corte { height: 15mm !important; }
+}
+</style>
+{% endblock %}
