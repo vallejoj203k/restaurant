@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block title %}Turno de {{ turno.nombre }} — Reporte de Cierre{% endblock %}
+
+{% block content %}
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+<div class="container-fluid mt-4">
+
+    <!-- Encabezado -->
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+            <h2>
+                <i class="fas fa-{% if turno.nombre == 'Mañana' %}sun{% elif turno.nombre == 'Tarde' %}cloud-sun{% else %}moon{% endif %} me-2"></i>
+                Turno de {{ turno.nombre }}
+                {% if turno.activo %}
+                <span class="badge bg-success ms-2">Activo</span>
+                {% else %}
+                <span class="badge bg-secondary ms-2">Cerrado</span>
+                {% endif %}
+            </h2>
+            <p class="text-muted mb-0">Reporte de cierre de caja</p>
+        </div>
+        <div class="d-flex gap-2">
+            {% if turno.activo and current_user.rol == 'admin' %}
+            <button class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#modalCerrarTurno">
+                <i class="fas fa-lock"></i> Cerrar Turno
+            </button>
+            {% endif %}
+            <a href="{{ url_for('lista_turnos') }}" class="btn btn-secondary">
+                <i class="fas fa-arrow-left"></i> Volver a Turnos
+            </a>
+        </div>
+    </div>
+
+    <!-- Ficha del Turno -->
+    <div class="card mb-4">
+        <div class="card-header {% if turno.activo %}bg-success text-white{% else %}bg-dark text-white{% endif %}">
+            <h5 class="mb-0"><i class="fas fa-info-circle me-2"></i> Información del Turno</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3">
+                    <p class="mb-1 text-muted">Abierto por</p>
+                    <p class="mb-0"><strong>{{ turno.abierto_por.nombre }}</strong></p>
+                </div>
+                <div class="col-md-3">
+                    <p class="mb-1 text-muted">Fecha de apertura</p>
+                    <p class="mb-0"><strong>{{ turno.fecha_apertura.strftime('%d/%m/%Y %I:%M %p') }}</strong></p>
+                </div>
+                <div class="col-md-3">
+                    <p class="mb-1 text-muted">Cerrado por</p>
+                    <p class="mb-0">
+                        {% if turno.cerrado_por %}
+                        <strong>{{ turno.cerrado_por.nombre }}</strong>
+                        {% else %}
+                        <span class="text-success">Abierto</span>
+                        {% endif %}
+                    </p>
+                </div>
+                <div class="col-md-3">
+                    <p class="mb-1 text-muted">Fecha de cierre</p>
+                    <p class="mb-0">
+                        {% if turno.fecha_cierre %}
+                        <strong>{{ turno.fecha_cierre.strftime('%d/%m/%Y %I:%M %p') }}</strong>
+                        {% else %}
+                        <span class="text-success">—</span>
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+            {% if turno.notas_cierre %}
+            <div class="mt-3 pt-3 border-top">
+                <p class="mb-1 text-muted">Notas de cierre</p>
+                <p class="mb-0">{{ turno.notas_cierre }}</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Tarjetas de Resumen -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card border-primary text-center h-100">
+                <div class="card-body">
+                    <div class="display-4 text-primary mb-2">{{ facturas|length }}</div>
+                    <p class="card-text text-muted mb-0">Total Facturas</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-success text-center h-100">
+                <div class="card-body">
+                    <div class="display-5 text-success mb-2 fw-bold">${{ "{:,.0f}".format(total_facturado) }}</div>
+                    <p class="card-text text-muted mb-0">Total Facturado</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-info text-center h-100">
+                <div class="card-body">
+                    <div class="display-4 text-info mb-2">{{ por_metodo|length }}</div>
+                    <p class="card-text text-muted mb-0">Métodos de Pago</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Desglose por Método de Pago -->
+    {% if por_metodo %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="fas fa-credit-card me-2"></i> Desglose por Método de Pago</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                {% for metodo, monto in por_metodo.items() %}
+                <div class="col-md-4 mb-3">
+                    <div class="card bg-light">
+                        <div class="card-body text-center py-3">
+                            <div class="mb-2">
+                                {% if metodo == 'efectivo' %}
+                                <i class="fas fa-money-bill-wave fa-2x text-success"></i>
+                                {% elif metodo == 'tarjeta' %}
+                                <i class="fas fa-credit-card fa-2x text-primary"></i>
+                                {% elif metodo == 'transferencia' %}
+                                <i class="fas fa-exchange-alt fa-2x text-info"></i>
+                                {% else %}
+                                <i class="fas fa-wallet fa-2x text-secondary"></i>
+                                {% endif %}
+                            </div>
+                            <h6 class="text-uppercase text-muted mb-1">{{ metodo }}</h6>
+                            <h4 class="mb-0 fw-bold">${{ "{:,.0f}".format(monto) }}</h4>
+                            {% if total_facturado > 0 %}
+                            <small class="text-muted">{{ "{:.1f}".format(monto / total_facturado * 100) }}% del total</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Lista de Facturas del Turno -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="fas fa-list me-2"></i> Facturas del Turno</h5>
+            <span class="badge bg-secondary">{{ facturas|length }} facturas</span>
+        </div>
+        <div class="card-body p-0">
+            {% if facturas %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Número</th>
+                            <th>Hora</th>
+                            <th>Cliente</th>
+                            <th>Tipo</th>
+                            <th>Método de Pago</th>
+                            <th>Estado</th>
+                            <th class="text-end">Total</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for factura in facturas %}
+                        <tr>
+                            <td>
+                                <strong>{{ factura.numero_consecutivo }}</strong>
+                            </td>
+                            <td>
+                                <small>{{ factura.fecha_emision.strftime('%d/%m %I:%M %p') }}</small>
+                            </td>
+                            <td>
+                                {{ factura.cliente_nombre or '—' }}
+                            </td>
+                            <td>
+                                {% if factura.sesion %}
+                                <span class="badge bg-primary"><i class="fas fa-table me-1"></i>Mesa {{ factura.sesion.mesa.numero }}</span>
+                                {% elif factura.domicilios %}
+                                <span class="badge bg-warning text-dark"><i class="fas fa-motorcycle me-1"></i>Domicilio</span>
+                                {% else %}
+                                <span class="badge bg-secondary"><i class="fas fa-file-alt me-1"></i>Manual</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="text-uppercase">{{ factura.metodo_pago or 'efectivo' }}</span>
+                            </td>
+                            <td>
+                                {% if factura.estado_pago == 'pagada' %}
+                                <span class="badge bg-success">Pagada</span>
+                                {% elif factura.estado_pago == 'pendiente' %}
+                                <span class="badge bg-warning">Pendiente</span>
+                                {% else %}
+                                <span class="badge bg-danger">Vencida</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                <strong>${{ "{:,.0f}".format(factura.total) }}</strong>
+                            </td>
+                            <td>
+                                <a href="{{ url_for('ver_factura', factura_id=factura.id) }}" class="btn btn-sm btn-outline-primary">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="table-dark">
+                        <tr>
+                            <td colspan="6"><strong>TOTAL DEL TURNO</strong></td>
+                            <td class="text-end"><strong>${{ "{:,.0f}".format(total_facturado) }}</strong></td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            {% else %}
+            <div class="p-4 text-center text-muted">
+                <i class="fas fa-inbox fa-2x mb-2"></i>
+                <p>No hay facturas en este turno.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+
+<!-- Modal Cerrar Turno (solo si está activo) -->
+{% if turno.activo and current_user.rol == 'admin' %}
+<div class="modal fade" id="modalCerrarTurno" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('cerrar_turno', turno_id=turno.id) }}">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="fas fa-lock me-2"></i> Cerrar Turno de {{ turno.nombre }}</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        Esta acción cerrará el turno definitivamente.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Notas de Cierre (opcional)</label>
+                        <textarea name="notas_cierre" class="form-control" rows="3"
+                                  placeholder="Observaciones del cierre de turno..."></textarea>
+                    </div>
+                    <div class="row text-center bg-light rounded p-3">
+                        <div class="col-6">
+                            <p class="mb-1 text-muted small">Facturas</p>
+                            <h4>{{ facturas|length }}</h4>
+                        </div>
+                        <div class="col-6">
+                            <p class="mb-1 text-muted small">Total Facturado</p>
+                            <h4 class="text-success">${{ "{:,.0f}".format(total_facturado) }}</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-danger">
+                        <i class="fas fa-lock"></i> Confirmar Cierre
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+{% endblock %}

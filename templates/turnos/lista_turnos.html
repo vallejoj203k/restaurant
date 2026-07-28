@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block title %}Turnos{% endblock %}
+
+{% block content %}
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-clock"></i> Gestión de Turnos</h2>
+        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Volver
+        </a>
+    </div>
+
+    <!-- Turno Activo -->
+    {% if turno_activo %}
+    <div class="card border-success mb-4">
+        <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="fas fa-circle text-white me-2"></i> Turno Activo</h5>
+            <span class="badge bg-light text-success fs-6">EN CURSO</span>
+        </div>
+        <div class="card-body">
+            <div class="row align-items-center">
+                <div class="col-md-6">
+                    <h4 class="text-success mb-1">Turno de {{ turno_activo.nombre }}</h4>
+                    <p class="mb-1 text-muted">
+                        <i class="fas fa-door-open"></i>
+                        Abierto por: <strong>{{ turno_activo.abierto_por.nombre }}</strong>
+                    </p>
+                    <p class="mb-0 text-muted">
+                        <i class="fas fa-calendar-alt"></i>
+                        Desde: <strong>{{ turno_activo.fecha_apertura.strftime('%d/%m/%Y %I:%M %p') }}</strong>
+                    </p>
+                </div>
+                <div class="col-md-3 text-center">
+                    <div class="display-6 text-success">
+                        {{ turno_activo.facturas|length }}
+                    </div>
+                    <small class="text-muted">Facturas en este turno</small>
+                </div>
+                <div class="col-md-3 text-end">
+                    <a href="{{ url_for('ver_turno', turno_id=turno_activo.id) }}" class="btn btn-outline-success me-2">
+                        <i class="fas fa-eye"></i> Ver Detalle
+                    </a>
+                    {% if current_user.rol == 'admin' %}
+                    <button class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#modalCerrarTurno">
+                        <i class="fas fa-lock"></i> Cerrar Turno
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-warning d-flex align-items-center mb-4">
+        <i class="fas fa-exclamation-triangle me-2 fs-5"></i>
+        <div>
+            <strong>No hay turno activo.</strong> Las facturas creadas no serán asignadas a ningún turno hasta que se abra uno.
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Abrir Nuevo Turno (solo admin, solo si no hay activo) -->
+    {% if current_user.rol == 'admin' and not turno_activo %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="fas fa-plus-circle"></i> Abrir Nuevo Turno</h5>
+        </div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('abrir_turno') }}" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label">Tipo de Turno</label>
+                    <select name="nombre" class="form-select" required>
+                        <option value="Mañana">Mañana</option>
+                        <option value="Tarde">Tarde</option>
+                        <option value="Noche">Noche</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-door-open"></i> Abrir Turno
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Historial de Turnos -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="fas fa-history"></i> Historial de Turnos (últimos 30)</h5>
+        </div>
+        <div class="card-body p-0">
+            {% if turnos %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>#</th>
+                            <th>Turno</th>
+                            <th>Abierto por</th>
+                            <th>Fecha Apertura</th>
+                            <th>Fecha Cierre</th>
+                            <th>Facturas</th>
+                            <th>Total Facturado</th>
+                            <th>Estado</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for turno in turnos %}
+                        <tr>
+                            <td>{{ turno.id }}</td>
+                            <td>
+                                <i class="fas fa-{% if turno.nombre == 'Mañana' %}sun{% elif turno.nombre == 'Tarde' %}cloud-sun{% else %}moon{% endif %} me-1"></i>
+                                <strong>{{ turno.nombre }}</strong>
+                            </td>
+                            <td>{{ turno.abierto_por.nombre }}</td>
+                            <td>{{ turno.fecha_apertura.strftime('%d/%m/%Y %I:%M %p') }}</td>
+                            <td>
+                                {% if turno.fecha_cierre %}
+                                    {{ turno.fecha_cierre.strftime('%d/%m/%Y %I:%M %p') }}
+                                {% else %}
+                                    <span class="text-success">Abierto</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-secondary">{{ turno.facturas|length }}</span>
+                            </td>
+                            <td>
+                                <strong>${{ "{:,.0f}".format(turno.facturas|sum(attribute='total')) }}</strong>
+                            </td>
+                            <td>
+                                {% if turno.activo %}
+                                <span class="badge bg-success">Activo</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Cerrado</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{{ url_for('ver_turno', turno_id=turno.id) }}" class="btn btn-sm btn-outline-primary">
+                                    <i class="fas fa-eye"></i> Ver
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="p-4 text-center text-muted">
+                <i class="fas fa-inbox fa-2x mb-2"></i>
+                <p>No hay turnos registrados.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Modal Cerrar Turno Activo -->
+{% if turno_activo and current_user.rol == 'admin' %}
+<div class="modal fade" id="modalCerrarTurno" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('cerrar_turno', turno_id=turno_activo.id) }}">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="fas fa-lock me-2"></i> Cerrar Turno de {{ turno_activo.nombre }}</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        Esta acción cerrará el turno. Una vez cerrado, no se podrán agregar más facturas a este turno.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Notas de Cierre (opcional)</label>
+                        <textarea name="notas_cierre" class="form-control" rows="3"
+                                  placeholder="Observaciones del cierre de turno..."></textarea>
+                    </div>
+                    <div class="row text-center">
+                        <div class="col-6">
+                            <p class="mb-1 text-muted">Facturas</p>
+                            <h4>{{ turno_activo.facturas|length }}</h4>
+                        </div>
+                        <div class="col-6">
+                            <p class="mb-1 text-muted">Total Facturado</p>
+                            <h4 class="text-success">${{ "{:,.0f}".format(turno_activo.facturas|sum(attribute='total')) }}</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-danger">
+                        <i class="fas fa-lock"></i> Confirmar Cierre
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+{% endblock %}
