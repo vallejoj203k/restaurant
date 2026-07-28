@@ -1,6 +1,6 @@
 {
   "name": "Restaurante - Panel",
-  "short_name": "P-saludable",
+  "short_name": "Platea Sport",
   "description": "Panel de gestión del restaurante",
   "start_url": "/dashboard",
   "scope": "/",
