@@ -54,7 +54,12 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 # Preferir DATABASE_URL (Railway / Heroku). Si viene con `postgres://`, reemplazar por `postgresql://` para SQLAlchemy.
 database_url = os.environ.get('DATABASE_URL')
 if database_url:
-    database_url = database_url.replace('postgres://', 'postgresql://')
+    # Forzar el driver psycopg2 (el instalado en requirements.txt), sin importar
+    # si la URL viene como postgres://, postgresql:// o postgresql+psycopg://
+    for prefix in ('postgres://', 'postgresql://', 'postgresql+psycopg://'):
+        if database_url.startswith(prefix):
+            database_url = 'postgresql+psycopg2://' + database_url[len(prefix):]
+            break
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 else:
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'restaurante.db')
