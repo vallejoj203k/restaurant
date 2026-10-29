@@ -1,6 +1,6 @@
 {
   "name": "Restaurante - Panel",
-  "short_name": "Platea Sport",
+  "short_name": "Isaac Burgers",
   "description": "Panel de gestión del restaurante",
   "start_url": "/dashboard",
   "scope": "/",
