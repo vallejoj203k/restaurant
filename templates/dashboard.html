@@ -1119,8 +1119,8 @@
      SISTEMA DE NOTIFICACIONES PUSH — MESERO
      Pantalla apagada + sonido + vibración
      ===================================================== -->
-{% if current_user.rol == 'admin' %}
-<!-- Alertas push de pedidos nuevos para administradores -->
+{% if current_user.rol in ('admin', 'mesero') %}
+<!-- Alertas push (pedidos nuevos / pedidos listos) para administradores y meseros -->
 <script src="/static/push.js" defer></script>
 {% endif %}
 
@@ -1308,82 +1308,7 @@ function consultarPedidosListos() {
 }
 setInterval(consultarPedidosListos, INTERVALO_MS);
 
-// ═══════════════════════════════════════════════════════════
-//  WEB PUSH — notificaciones con pantalla apagada
-// ═══════════════════════════════════════════════════════════
-function urlBase64ToUint8Array(base64String) {
-    const padding = '='.repeat((4 - base64String.length % 4) % 4);
-    const base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-    const raw     = window.atob(base64);
-    return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
-}
-
-async function iniciarPush() {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        console.log('Push no soportado en este navegador.');
-        return;
-    }
-
-    // 1. Registrar el Service Worker
-    let registro;
-    try {
-        registro = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
-    } catch (e) {
-        console.error('Error al registrar SW:', e);
-        return;
-    }
-
-    // 2. Pedir permiso de notificaciones (solo si no se ha pedido antes)
-    const permiso = await Notification.requestPermission();
-    if (permiso !== 'granted') {
-        console.log('Permiso de notificaciones denegado.');
-        return;
-    }
-
-    // 3. Obtener la clave pública VAPID
-    let vapidPublicKey;
-    try {
-        const res = await fetch('/push/vapid_public');
-        const dat = await res.json();
-        vapidPublicKey = dat.publicKey;
-        if (!vapidPublicKey) { console.log('VAPID no configurado.'); return; }
-    } catch(e) { return; }
-
-    // 4. Suscribirse al servidor push del navegador
-    let suscripcion;
-    try {
-        suscripcion = await registro.pushManager.subscribe({
-            userVisibleOnly:      true,
-            applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
-        });
-    } catch(e) {
-        console.error('Error al suscribirse al push:', e);
-        return;
-    }
-
-    // 5. Enviar suscripción al servidor Flask
-    try {
-        await fetch('/push/suscribir', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify(suscripcion.toJSON())
-        });
-        console.log('✅ Suscripción push registrada correctamente.');
-    } catch(e) {
-        console.error('Error al guardar suscripción:', e);
-    }
-}
-
-// Iniciar push al primer clic del usuario (requerimiento de los navegadores)
-let pushIniciado = false;
-document.addEventListener('click', function iniciarPushAlClic() {
-    if (pushIniciado) return;
-    pushIniciado = true;
-    iniciarPush();
-    document.removeEventListener('click', iniciarPushAlClic);
-});
-// También intentar directamente (funciona si ya se dio permiso antes)
-iniciarPush();
+// Las alertas push se activan con el botón de /static/push.js
 
 })();
 </script>
