@@ -3963,6 +3963,126 @@ MENU_ISAAC_BURGERS = [
 ]
 
 
+# ==========================================
+# REINICIAR DATOS DE PRUEBA (solo admin)
+# ==========================================
+def _tablas_reinicio():
+    """(clave, etiqueta, modelo, columna de fecha) de los movimientos que se pueden borrar."""
+    return [
+        ('pedidos',    'Pedidos',            Pedido,         Pedido.fecha),
+        ('sesiones',   'Sesiones de mesa',   Sesion,         Sesion.fecha_inicio),
+        ('facturas',   'Facturas',           Factura,        Factura.fecha_emision),
+        ('turnos',     'Turnos',             Turno,          Turno.fecha_apertura),
+        ('gastos',     'Gastos',             Gasto,          Gasto.fecha),
+        ('consumos',   'Consumo interno',    ConsumoInterno, ConsumoInterno.fecha),
+        ('domicilios', 'Domicilios',         Domicilio,      Domicilio.fecha_pedido),
+    ]
+
+
+def _conteos_reinicio():
+    hoy = ahora().date()
+    filas = []
+    for clave, etiqueta, modelo, col in _tablas_reinicio():
+        filas.append({
+            'clave': clave,
+            'etiqueta': etiqueta,
+            'hoy': modelo.query.filter(db.func.date(col) == hoy).count(),
+            'total': modelo.query.count(),
+        })
+    return filas
+
+
+@app.route("/admin/reiniciar_datos", methods=["GET", "POST"])
+@login_required
+def reiniciar_datos():
+    """
+    Borra los movimientos (pedidos, facturas, gastos, etc.) para que los
+    reportes empiecen en cero. NO toca usuarios, mesas, menú, categorías,
+    configuración, proveedores, presupuestos, zonas ni repartidores.
+    """
+    if current_user.rol != 'admin':
+        flash('Solo los administradores pueden reiniciar los datos', 'error')
+        return redirect(url_for('dashboard'))
+
+    if request.method == "POST":
+        alcance = request.form.get('alcance')
+        if alcance not in ('hoy', 'todo'):
+            flash('Elige qué datos borrar', 'error')
+            return redirect(url_for('reiniciar_datos'))
+        if (request.form.get('confirmacion') or '').strip().upper() != 'BORRAR':
+            flash('Escribe BORRAR para confirmar', 'error')
+            return redirect(url_for('reiniciar_datos'))
+
+        hoy = ahora().date()
+
+        def ids(modelo, col):
+            q = db.session.query(modelo.id)
+            if alcance == 'hoy':
+                q = q.filter(db.func.date(col) == hoy)
+            return [r[0] for r in q.all()]
+
+        try:
+            borrados = {}
+            ids_dom = ids(Domicilio, Domicilio.fecha_pedido)
+            ids_fac = ids(Factura, Factura.fecha_emision)
+            ids_ped = ids(Pedido, Pedido.fecha)
+            ids_ses = ids(Sesion, Sesion.fecha_inicio)
+            ids_tur = ids(Turno, Turno.fecha_apertura)
+            ids_gas = ids(Gasto, Gasto.fecha)
+            ids_con = ids(ConsumoInterno, ConsumoInterno.fecha)
+
+            def borrar(modelo, lista):
+                if not lista:
+                    return 0
+                return modelo.query.filter(modelo.id.in_(lista)).delete(synchronize_session=False)
+
+            # Domicilios y sus ítems
+            if ids_dom:
+                ItemDomicilio.query.filter(ItemDomicilio.domicilio_id.in_(ids_dom)).delete(synchronize_session=False)
+            borrados['domicilios'] = borrar(Domicilio, ids_dom)
+
+            # Facturas (soltar referencias de domicilios que se conservan)
+            if ids_fac:
+                Domicilio.query.filter(Domicilio.factura_id.in_(ids_fac)).update(
+                    {'factura_id': None}, synchronize_session=False)
+            borrados['facturas'] = borrar(Factura, ids_fac)
+
+            # Pedidos, incluidos los que pertenecen a sesiones que se borran
+            if ids_ses:
+                ids_ped = list(set(ids_ped) | {
+                    r[0] for r in db.session.query(Pedido.id).filter(Pedido.sesion_id.in_(ids_ses)).all()
+                })
+            borrados['pedidos'] = borrar(Pedido, ids_ped)
+
+            # Sesiones (soltar referencias de facturas que se conservan)
+            if ids_ses:
+                Factura.query.filter(Factura.sesion_id.in_(ids_ses)).update(
+                    {'sesion_id': None}, synchronize_session=False)
+            borrados['sesiones'] = borrar(Sesion, ids_ses)
+
+            # Turnos (soltar referencias de facturas que se conservan)
+            if ids_tur:
+                Factura.query.filter(Factura.turno_id.in_(ids_tur)).update(
+                    {'turno_id': None}, synchronize_session=False)
+            borrados['turnos'] = borrar(Turno, ids_tur)
+
+            borrados['gastos'] = borrar(Gasto, ids_gas)
+            borrados['consumos'] = borrar(ConsumoInterno, ids_con)
+
+            db.session.commit()
+            total = sum(borrados.values())
+            detalle = ', '.join(f"{v} {k}" for k, v in borrados.items() if v)
+            logging.info(f"Reinicio de datos ({alcance}) por {current_user.username}: {detalle or 'nada'}")
+            flash(f"Listo: se borraron {total} registros ({detalle or 'no había datos'}).", 'success')
+        except Exception as e:
+            db.session.rollback()
+            logging.error(f"Error reiniciando datos: {e}")
+            flash(f'Error al borrar los datos: {e}. No se borró nada.', 'error')
+        return redirect(url_for('reiniciar_datos'))
+
+    return render_template("reiniciar_datos.html", filas=_conteos_reinicio(), hoy=ahora().date())
+
+
 @app.route("/cargar_menu")
 @login_required
 def cargar_menu():
