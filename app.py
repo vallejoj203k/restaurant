@@ -10,6 +10,7 @@ from sqlalchemy import text
 from dotenv import load_dotenv
 import sys
 import logging
+import threading
 from zoneinfo import ZoneInfo          # Python 3.9+ (incluido, sin instalar nada)
 
 ZONA_COLOMBIA = ZoneInfo("America/Bogota")
@@ -1482,6 +1483,12 @@ def nuevo_pedido(mesa_id):
             total_general += precio_unitario * cantidad
         
         db.session.commit()
+
+        _enviar_push_nuevo_pedido(
+            mesa.display_name,
+            [(i['cantidad'], i['nombre']) for i in carrito],
+            excluir_usuario_id=current_user.id,
+        )
         
         total_items = sum(i['cantidad'] for i in carrito)
         flash(f'Pedido agregado: {total_items} ítem(s) por ${total_general:.2f}', 'success')
@@ -1646,34 +1653,94 @@ def actualizar_estado(pedido_id, estado):
     return redirect(request.referrer or url_for('dashboard'))
 
 
-def _enviar_push_pedido_listo(pedido):
-    """Envía notificación push a todos los meseros suscritos."""
+def _enviar_push(roles, payload, excluir_usuario_id=None):
+    """
+    Envía una notificación push a todos los dispositivos suscritos de usuarios
+    con alguno de los roles indicados. El envío se hace en un hilo aparte para
+    no demorar la respuesta al usuario.
+    """
     if not PUSH_DISPONIBLE or not VAPID_PRIVATE_KEY:
         return
-    subs = PushSubscripcion.query.all()
-    payload = json.dumps({
+    try:
+        query = PushSubscripcion.query.join(Usuario).filter(Usuario.rol.in_(roles))
+        if excluir_usuario_id:
+            query = query.filter(PushSubscripcion.usuario_id != excluir_usuario_id)
+        destinos = [
+            {"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}}
+            for sub in query.all()
+        ]
+    except Exception as e:
+        logging.error(f"Error consultando suscripciones push: {e}")
+        return
+    if not destinos:
+        return
+
+    data = json.dumps(payload)
+
+    def _enviar():
+        expiradas = []
+        for destino in destinos:
+            try:
+                webpush(
+                    subscription_info=destino,
+                    data=data,
+                    vapid_private_key=VAPID_PRIVATE_KEY,
+                    vapid_claims=dict(VAPID_CLAIMS),
+                    ttl=3600,
+                    headers={"Urgency": "high"},  # entrega inmediata aunque el teléfono esté en reposo
+                )
+            except WebPushException as ex:
+                # Suscripción expirada o inválida → eliminar
+                if ex.response is not None and ex.response.status_code in (404, 410):
+                    expiradas.append(destino["endpoint"])
+                else:
+                    logging.warning(f"Error enviando push: {ex}")
+            except Exception as ex:
+                logging.warning(f"Error enviando push: {ex}")
+        if expiradas:
+            with app.app_context():
+                try:
+                    PushSubscripcion.query.filter(
+                        PushSubscripcion.endpoint.in_(expiradas)
+                    ).delete(synchronize_session=False)
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
+    threading.Thread(target=_enviar, daemon=True).start()
+
+
+def _enviar_push_pedido_listo(pedido):
+    """Notifica a los meseros que un pedido quedó listo."""
+    mesa = pedido.mesa.display_name if pedido.mesa else '?'
+    _enviar_push(['mesero'], {
+        "tipo":  "pedido_listo",
         "title": "🍽️ Pedido listo",
-        "body":  f"{pedido.cantidad}× {pedido.producto} — {pedido.mesa.display_name if pedido.mesa else '?'}",
-        "mesa":  pedido.mesa.display_name if pedido.mesa else '?',
+        "body":  f"{pedido.cantidad}× {pedido.producto} — {mesa}",
+        "mesa":  mesa,
+        "url":   "/dashboard",
+        "tag":   f"pedido-listo-{pedido.id}",
     })
-    for sub in subs:
-        try:
-            webpush(
-                subscription_info={
-                    "endpoint": sub.endpoint,
-                    "keys": {"p256dh": sub.p256dh, "auth": sub.auth}
-                },
-                data=payload,
-                vapid_private_key=VAPID_PRIVATE_KEY,
-                vapid_claims=VAPID_CLAIMS
-            )
-        except WebPushException as ex:
-            # Suscripción expirada o inválida → eliminar
-            if ex.response and ex.response.status_code in (404, 410):
-                db.session.delete(sub)
-                db.session.commit()
-        except Exception:
-            pass
+
+
+def _enviar_push_nuevo_pedido(origen, items, excluir_usuario_id=None, url="/cocina"):
+    """
+    Notifica a cocina y administradores que llegó un pedido nuevo.
+    items: lista de (cantidad, producto).
+    """
+    if not items:
+        return
+    detalle = ", ".join(f"{cant}× {prod}" for cant, prod in items[:4])
+    if len(items) > 4:
+        detalle += f" y {len(items) - 4} más"
+    _enviar_push(['cocina', 'admin'], {
+        "tipo":  "nuevo_pedido",
+        "title": f"🔔 Nuevo pedido — {origen}",
+        "body":  detalle,
+        "mesa":  origen,
+        "url":   url,
+        "tag":   f"nuevo-pedido-{int(datetime.now().timestamp() * 1000)}",
+    }, excluir_usuario_id=excluir_usuario_id)
 
 
 # ── Servir el Service Worker desde la raíz (obligatorio para el scope /) ──
@@ -3243,6 +3310,13 @@ def nuevo_domicilio():
                 db.session.add(item)
             
             db.session.commit()
+
+            _enviar_push_nuevo_pedido(
+                f"Domicilio #{domicilio.id}",
+                [(i['cantidad'], i['nombre']) for i in items_data],
+                excluir_usuario_id=current_user.id,
+                url="/cocina/domicilios",
+            )
             
             flash(f'Domicilio #{domicilio.id} creado exitosamente - Total: ${total:,.0f}', 'success')
             return redirect(url_for('ver_domicilio', domicilio_id=domicilio.id))
@@ -4006,6 +4080,7 @@ def pedido_publico():
             db.session.flush()
 
         # Crear un pedido por cada ítem
+        items_notificar = []
         for item in items:
             nombre   = item.get('nombre', '').strip()
             cantidad = int(item.get('cantidad', 1))
@@ -4025,8 +4100,10 @@ def pedido_publico():
                 estado='pendiente'
             )
             db.session.add(pedido)
+            items_notificar.append((cantidad, nombre))
 
         db.session.commit()
+        _enviar_push_nuevo_pedido(f"{mesa.display_name} (menú digital)", items_notificar)
         return jsonify({'success': True, 'mesa': mesa_num})
 
     except Exception as e:

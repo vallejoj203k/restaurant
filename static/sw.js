@@ -3,7 +3,7 @@
 //  Archivo: static/sw.js
 // =============================================================
 
-const CACHE_NAME = 'restaurante-v1';
+const CACHE_NAME = 'restaurante-v2';
 const URLS_CACHE = ['/dashboard', '/static/css/styles.css', '/static/img/icon-192.png'];
 
 // ── Instalación: cachear recursos clave ──────────────────────
@@ -47,32 +47,48 @@ self.addEventListener('push', function (event) {
         if (event.data) data.body = event.data.text();
     }
 
+    const esNuevoPedido = data.tipo === 'nuevo_pedido';
+
     const opciones = {
-        body:     data.body || 'Un pedido está listo.',
+        body:     data.body || (esNuevoPedido ? 'Llegó un pedido nuevo.' : 'Un pedido está listo.'),
         icon:     '/static/img/icon-192.png',
         badge:    '/static/img/badge-72.png',
-        vibrate:  [300, 150, 300, 150, 500],
-        tag:      'pedido-listo',
+        // Vibración larga e insistente para pedidos nuevos
+        vibrate:  esNuevoPedido
+                    ? [500, 200, 500, 200, 500, 200, 800, 300, 800]
+                    : [300, 150, 300, 150, 500],
+        // Tag único por pedido → cada pedido suena y queda su propia notificación
+        tag:      data.tag || (esNuevoPedido ? 'nuevo-pedido-' + Date.now() : 'pedido-listo'),
         renotify: true,
-        data:     { mesa: data.mesa || '' },
-        actions:  [{ action: 'ver', title: '👀 Ver pedidos' }]
+        silent:   false,                   // usar el sonido de notificación del teléfono
+        requireInteraction: esNuevoPedido, // no desaparece hasta que alguien la toque
+        timestamp: Date.now(),
+        data:     { mesa: data.mesa || '', url: data.url || (esNuevoPedido ? '/cocina' : '/dashboard') },
+        actions:  [{ action: 'ver', title: esNuevoPedido ? '👨‍🍳 Ver cocina' : '👀 Ver pedidos' }]
     };
 
     event.waitUntil(
-        self.registration.showNotification(data.title, opciones)
+        Promise.all([
+            self.registration.showNotification(data.title || '🔔 Notificación', opciones),
+            // Si la app está abierta, avisar a la página para que suene la alarma también ahí
+            self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientes => {
+                clientes.forEach(c => c.postMessage({ tipo: 'push', payload: data }));
+            })
+        ])
     );
 });
 
-// ── Al tocar la notificación → abrir/enfocar el dashboard ────
+// ── Al tocar la notificación → abrir/enfocar la pantalla correspondiente ────
 self.addEventListener('notificationclick', function (event) {
     event.notification.close();
+    const destino = (event.notification.data && event.notification.data.url) || '/dashboard';
     event.waitUntil(
         self.clients.matchAll({ type: 'window', includeUncontrolled: true })
             .then(function (clientes) {
                 for (const c of clientes) {
-                    if (c.url.includes('/dashboard') && 'focus' in c) return c.focus();
+                    if (c.url.includes(destino) && 'focus' in c) return c.focus();
                 }
-                if (self.clients.openWindow) return self.clients.openWindow('/dashboard');
+                if (self.clients.openWindow) return self.clients.openWindow(destino);
             })
     );
 });
