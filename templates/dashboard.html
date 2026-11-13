@@ -1119,6 +1119,11 @@
      SISTEMA DE NOTIFICACIONES PUSH — MESERO
      Pantalla apagada + sonido + vibración
      ===================================================== -->
+{% if current_user.rol == 'admin' %}
+<!-- Alertas push de pedidos nuevos para administradores -->
+<script src="/static/push.js" defer></script>
+{% endif %}
+
 {% if current_user.rol == 'mesero' %}
 
 <!-- Banner de instalación PWA -->
