@@ -2302,8 +2302,8 @@ def nuevo_gasto():
             fecha_vencimiento_str = request.form.get("fecha_vencimiento")
             
             # Validaciones básicas
-            if not concepto or monto <= 0:
-                flash('Debes completar todos los campos requeridos', 'error')
+            if not concepto or not monto or monto <= 0 or not categoria_id:
+                flash('Debes completar todos los campos requeridos (incluida la categoría)', 'error')
                 return redirect(url_for('nuevo_gasto'))
             
             # Convertir fecha
@@ -2351,13 +2351,40 @@ def nuevo_gasto():
             return redirect(url_for('nuevo_gasto'))
     
     # GET: Mostrar formulario
-    categorias = CategoriaGasto.query.filter_by(activa=True).order_by(CategoriaGasto.nombre).all()
+    categorias = asegurar_categorias_gasto()
     proveedores = Proveedor.query.filter_by(activo=True).order_by(Proveedor.nombre).all()
     
     return render_template("gastos/nuevo_gasto.html",
                          categorias=categorias,
                          proveedores=proveedores,
                          now=ahora())
+
+
+CATEGORIAS_GASTO_DEFAULT = [
+    {'nombre': 'Materia Prima', 'descripcion': 'Compras de alimentos, bebidas y suministros de cocina', 'color': '#e67e22'},
+    {'nombre': 'Servicios Públicos', 'descripcion': 'Agua, luz, gas, internet, teléfono', 'color': '#2980b9'},
+    {'nombre': 'Nómina', 'descripcion': 'Pagos a empleados, prestaciones y seguridad social', 'color': '#27ae60'},
+]
+
+
+def asegurar_categorias_gasto():
+    """
+    Garantiza que existan categorías de gasto activas. Sin ellas el
+    desplegable de 'Categoría' queda vacío y no se puede registrar un gasto.
+    Devuelve la lista de categorías activas ordenadas por nombre.
+    """
+    categorias = CategoriaGasto.query.filter_by(activa=True).order_by(CategoriaGasto.nombre).all()
+    if categorias:
+        return categorias
+
+    for data in CATEGORIAS_GASTO_DEFAULT:
+        cat = CategoriaGasto.query.filter_by(nombre=data['nombre']).first()
+        if cat:
+            cat.activa = True  # reactivar si existía desactivada (o con activa NULL)
+        else:
+            db.session.add(CategoriaGasto(**data))
+    db.session.commit()
+    return CategoriaGasto.query.filter_by(activa=True).order_by(CategoriaGasto.nombre).all()
 
 
 # Función auxiliar para verificar presupuestos
@@ -3824,7 +3851,16 @@ else:
                 db.session.add(domicilios)
                 db.session.commit()
                 print("✅ Mesa Domicilios creada")
-                
+
+            # Crear categorías de gasto si no existen (necesarias para registrar gastos)
+            try:
+                asegurar_categorias_gasto()
+                print("✅ Categorías de gasto verificadas")
+            except Exception as e:
+                db.session.rollback()
+                print(f"Error creando categorías de gasto: {e}")
+
+
         except Exception as e:
             print(f"⚠️ Error en inicialización: {e}")
             # No hacer rollback aquí, dejar que la app arranque de todos modos
