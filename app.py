@@ -3705,6 +3705,98 @@ def api_calcular_costo_zona():
         'tiempo_estimado': 30
     })
 
+# ==========================================
+# CARGA DEL MENÚ DE ISAAC BURGERS
+# ==========================================
+# (categoría, [(nombre, descripción, precio), ...]) en el orden del menú impreso.
+MENU_ISAAC_BURGERS = [
+    ("Hamburguesas", [
+        ("Clásica", "Pan brioche, carne de res, queso, tocineta, cebolla caramelizada, vegetales, ripio, salsas, gaseosa", 11000),
+        ("Torbellino", "Pan brioche, doble carne, cebolla caramelizada, queso mozzarella, queso cheddar, vegetales, ripio, salsas, gaseosa", 16000),
+        ("Capricho", "Pan brioche, doble carne, cebolla caramelizada, piña calada, pepinillos, queso mozzarella, queso cheddar, vegetales, salsas, gaseosa", 18000),
+        ("Mexicana", "Pan brioche, doble carne, guacamole, jalapeños, nachos, vegetales, queso mozzarella, salsas, gaseosa", 16000),
+        ("Gratinada", "Pan brioche, doble carne, tocineta, queso mozzarella, queso cheddar, vegetales, ripio, salsas, gaseosa", 15000),
+    ]),
+    ("Perros Calientes", [
+        ("Perro Clásico", "Pan, salchicha americana, ripio, salsas, gaseosa", 7000),
+        ("Perro Revolución", "Pan, tocineta, queso mozzarella, cebolla caramelizada, ripio, salsas, gaseosa", 9000),
+        ("Chori Perro", "Pan, chorizo, tocineta, queso mozzarella, cebolla caramelizada, ripio, salsas, gaseosa", 11000),
+    ]),
+    ("Sándwich", [
+        ("Sándwich", "Pan, pollo, queso mozzarella, jamón, piña calada, pepinillos, vegetales, salsas, gaseosa", 12000),
+    ]),
+    ("Salchipapas", [
+        ("Salchipapa Clásica", "Papa, salchicha, salsas, gaseosa", 8000),
+        ("Salchipapa Gratinada", "Papa, salchicha, queso mozzarella, salsas, gaseosa", 12000),
+    ]),
+    ("Chuzos", [
+        ("Chuzo de Costilla de Cerdo", "Chuzo de costilla de cerdo, papa a la francesa, gaseosa", 13000),
+        ("Chuzo de Carne de Cerdo", "Chuzo de carne de cerdo, papa a la francesa, chimichurri, gaseosa", 12000),
+        ("Chorizo de Cerdo", "Chorizo de cerdo, papa a la francesa, gaseosa", 11000),
+    ]),
+    ("Asados", [
+        ("Carne de Cerdo 500 gramos", "Con gaseosa, papa a la francesa, ensalada", 23000),
+    ]),
+    ("Bebidas", [
+        ("Coca-Cola", "", 2000),
+        ("Botella de agua", "", 1000),
+        ("Gaseosa Postobón", "", 1000),
+    ]),
+    ("Agranda tu Combo", [
+        ("Porción de papa a la francesa", "Adicional para agrandar tu combo", 3000),
+    ]),
+]
+
+
+@app.route("/cargar_menu")
+@login_required
+def cargar_menu():
+    """
+    Carga el menú de Isaac Burgers. Solo agrega lo que falta (no duplica ni
+    borra nada) y no toca las imágenes. Acceder una vez como admin: /cargar_menu
+    """
+    if current_user.rol != 'admin':
+        flash('Solo los administradores pueden cargar el menú', 'error')
+        return redirect(url_for('dashboard'))
+
+    try:
+        cats_creadas = items_creados = 0
+        for orden_cat, (nombre_cat, items) in enumerate(MENU_ISAAC_BURGERS, start=1):
+            categoria = CategoriaMenu.query.filter(
+                db.func.lower(CategoriaMenu.nombre) == nombre_cat.lower()
+            ).first()
+            if not categoria:
+                categoria = CategoriaMenu(nombre=nombre_cat, orden=orden_cat, activa=True)
+                db.session.add(categoria)
+                db.session.flush()
+                cats_creadas += 1
+
+            for orden_item, (nombre, descripcion, precio) in enumerate(items, start=1):
+                existe = ItemMenu.query.filter(
+                    ItemMenu.categoria_id == categoria.id,
+                    db.func.lower(ItemMenu.nombre) == nombre.lower()
+                ).first()
+                if existe:
+                    continue
+                db.session.add(ItemMenu(
+                    nombre=nombre,
+                    descripcion=descripcion,
+                    precio=precio,
+                    categoria_id=categoria.id,
+                    disponible=True,
+                    orden=orden_item,
+                ))
+                items_creados += 1
+
+        db.session.commit()
+        flash(f'Menú cargado: {cats_creadas} categorías y {items_creados} productos nuevos', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error al cargar el menú: {e}', 'error')
+
+    return redirect(url_for('administrar_menu'))
+
+
 @app.route("/crear_categorias_ahora")
 @login_required
 def crear_categorias_ahora():
