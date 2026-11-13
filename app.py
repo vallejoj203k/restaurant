@@ -1792,22 +1792,26 @@ def _enviar_push_pedido_listo(pedido):
 
 def _enviar_push_nuevo_pedido(origen, items, excluir_usuario_id=None, url="/cocina"):
     """
-    Notifica a cocina y administradores que llegó un pedido nuevo.
+    Notifica a cocina, administradores y meseros que llegó un pedido nuevo.
     items: lista de (cantidad, producto).
+    url: pantalla que abre cocina al tocar la notificación; administradores
+    y meseros abren el dashboard.
     """
     if not items:
         return
     detalle = ", ".join(f"{cant}× {prod}" for cant, prod in items[:4])
     if len(items) > 4:
         detalle += f" y {len(items) - 4} más"
-    _enviar_push(['cocina', 'admin'], {
-        "tipo":  "nuevo_pedido",
-        "title": f"🔔 Nuevo pedido — {origen}",
-        "body":  detalle,
-        "mesa":  origen,
-        "url":   url,
-        "tag":   f"nuevo-pedido-{int(datetime.now().timestamp() * 1000)}",
-    }, excluir_usuario_id=excluir_usuario_id)
+    tag = f"nuevo-pedido-{int(datetime.now().timestamp() * 1000)}"
+    for roles, destino in ((['cocina'], url), (['admin', 'mesero'], "/dashboard")):
+        _enviar_push(roles, {
+            "tipo":  "nuevo_pedido",
+            "title": f"🔔 Nuevo pedido — {origen}",
+            "body":  detalle,
+            "mesa":  origen,
+            "url":   destino,
+            "tag":   tag,
+        }, excluir_usuario_id=excluir_usuario_id)
 
 
 # ── Servir el Service Worker desde la raíz (obligatorio para el scope /) ──
