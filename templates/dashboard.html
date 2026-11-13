@@ -1046,11 +1046,42 @@
             });
         });
 
-        // Refresh automático cada 30 segundos para actualizar estado de mesas
+        // Actualización automática del estado de mesas cada 5 segundos (sin recargar la página)
         {% if current_user.rol != 'cocina' %}
-        setTimeout(function() {
-            location.reload();
-        }, 30000);
+        (function () {
+            const INTERVALO_REFRESCO_MS = 5000;
+            let refrescando = false;
+
+            async function refrescarMesas() {
+                if (refrescando || document.hidden) return;
+                const modal = document.getElementById('modalCambioMesa');
+                if (modal && modal.style.display === 'flex') return; // no interrumpir al usuario
+                refrescando = true;
+                try {
+                    const res = await fetch(window.location.pathname, {
+                        headers: { 'X-Requested-With': 'fetch' },
+                        cache: 'no-store'
+                    });
+                    if (res.redirected && !res.url.includes('/dashboard')) { window.location.reload(); return; }
+                    if (!res.ok) return;
+                    const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+                    const nuevo = doc.querySelector('.mesas-grid');
+                    const actual = document.querySelector('.mesas-grid');
+                    if (nuevo && actual && nuevo.innerHTML !== actual.innerHTML) {
+                        actual.innerHTML = nuevo.innerHTML;
+                    }
+                } catch (e) {
+                    console.warn('No se pudo refrescar el dashboard', e);
+                } finally {
+                    refrescando = false;
+                }
+            }
+
+            setInterval(refrescarMesas, INTERVALO_REFRESCO_MS);
+            document.addEventListener('visibilitychange', function () {
+                if (!document.hidden) refrescarMesas();
+            });
+        })();
         {% endif %}
     </script>
     <!-- Modal Cambio de Mesa -->
