@@ -161,6 +161,70 @@ class PushSubscripcion(db.Model):
 
     usuario = db.relationship('Usuario', backref='push_subscripciones')
 
+
+class ClaveVapid(db.Model):
+    """
+    Claves VAPID para Web Push generadas automáticamente cuando no se
+    configuran por variables de entorno. Se guarda una sola fila (id=1)
+    para que todas las instancias/workers usen las mismas claves.
+    """
+    __tablename__ = 'clave_vapid'
+    id      = db.Column(db.Integer, primary_key=True)
+    publica = db.Column(db.String(200), nullable=False)
+    privada = db.Column(db.String(200), nullable=False)
+
+
+def _generar_claves_vapid():
+    """Genera un par de claves VAPID (P-256) en formato base64url."""
+    import base64
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+
+    def b64(b):
+        return base64.urlsafe_b64encode(b).rstrip(b'=').decode()
+
+    privada = ec.generate_private_key(ec.SECP256R1())
+    privada_bytes = privada.private_numbers().private_value.to_bytes(32, 'big')
+    publica_bytes = privada.public_key().public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
+    )
+    return b64(publica_bytes), b64(privada_bytes)
+
+
+_vapid_cache = {}
+
+
+def obtener_claves_vapid():
+    """
+    Devuelve (publica, privada). Usa las variables de entorno si están
+    definidas; si no, las lee de la base de datos y, si no existen, las
+    genera y las guarda.
+    """
+    if VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY:
+        return VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY
+    if _vapid_cache:
+        return _vapid_cache['publica'], _vapid_cache['privada']
+
+    try:
+        clave = db.session.get(ClaveVapid, 1)
+        if not clave:
+            publica, privada = _generar_claves_vapid()
+            try:
+                db.session.add(ClaveVapid(id=1, publica=publica, privada=privada))
+                db.session.commit()
+                logging.info("Claves VAPID generadas y guardadas en la base de datos")
+            except Exception:
+                # Otro worker las creó al mismo tiempo → usar las suyas
+                db.session.rollback()
+            clave = db.session.get(ClaveVapid, 1)
+        if clave:
+            _vapid_cache.update(publica=clave.publica, privada=clave.privada)
+            return clave.publica, clave.privada
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"No se pudieron obtener las claves VAPID: {e}")
+    return '', ''
+
 class CategoriaMenu(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nombre = db.Column(db.String(100), nullable=False)
@@ -1659,7 +1723,10 @@ def _enviar_push(roles, payload, excluir_usuario_id=None):
     con alguno de los roles indicados. El envío se hace en un hilo aparte para
     no demorar la respuesta al usuario.
     """
-    if not PUSH_DISPONIBLE or not VAPID_PRIVATE_KEY:
+    if not PUSH_DISPONIBLE:
+        return
+    _, vapid_privada = obtener_claves_vapid()
+    if not vapid_privada:
         return
     try:
         query = PushSubscripcion.query.join(Usuario).filter(Usuario.rol.in_(roles))
@@ -1684,7 +1751,7 @@ def _enviar_push(roles, payload, excluir_usuario_id=None):
                 webpush(
                     subscription_info=destino,
                     data=data,
-                    vapid_private_key=VAPID_PRIVATE_KEY,
+                    vapid_private_key=vapid_privada,
                     vapid_claims=dict(VAPID_CLAIMS),
                     ttl=3600,
                     headers={"Urgency": "high"},  # entrega inmediata aunque el teléfono esté en reposo
@@ -1756,7 +1823,10 @@ def service_worker():
 @app.route('/push/vapid_public')
 def push_vapid_public():
     """Devuelve la clave pública VAPID para que el navegador se suscriba."""
-    return jsonify({'publicKey': VAPID_PUBLIC_KEY})
+    if not PUSH_DISPONIBLE:
+        return jsonify({'publicKey': ''})
+    publica, _ = obtener_claves_vapid()
+    return jsonify({'publicKey': publica})
 
 
 @app.route('/push/suscribir', methods=['POST'])
