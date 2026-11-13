@@ -1551,7 +1551,6 @@ def nuevo_pedido(mesa_id):
         _enviar_push_nuevo_pedido(
             mesa.display_name,
             [(i['cantidad'], i['nombre']) for i in carrito],
-            excluir_usuario_id=current_user.id,
         )
         
         total_items = sum(i['cantidad'] for i in carrito)
@@ -1794,10 +1793,17 @@ def _enviar_push(roles, payload, excluir_usuario_id=None):
         logging.error(f"Error consultando suscripciones push: {e}")
         return
     if not destinos:
+        logging.info(f"Push '{payload.get('title')}': ningún dispositivo suscrito con roles {roles}")
         return
 
     data = json.dumps(payload)
-    threading.Thread(target=_enviar_a_destinos, args=(destinos, data), daemon=True).start()
+
+    def _enviar_y_registrar():
+        resultados = _enviar_a_destinos(destinos, data)
+        ok = sum(1 for _, exito, _ in resultados if exito)
+        logging.info(f"Push '{payload.get('title')}' a roles {roles}: {ok}/{len(resultados)} entregadas")
+
+    threading.Thread(target=_enviar_y_registrar, daemon=True).start()
 
 
 def _enviar_push_pedido_listo(pedido):
@@ -3450,7 +3456,6 @@ def nuevo_domicilio():
             _enviar_push_nuevo_pedido(
                 f"Domicilio #{domicilio.id}",
                 [(i['cantidad'], i['nombre']) for i in items_data],
-                excluir_usuario_id=current_user.id,
                 url="/cocina/domicilios",
             )
             
