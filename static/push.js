@@ -21,6 +21,16 @@
         return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
     }
 
+    function mismaClave(sub, clave) {
+        try {
+            const actual = sub.options && sub.options.applicationServerKey;
+            if (!actual) return true; // el navegador no la expone: asumir que sirve
+            const a = new Uint8Array(actual);
+            const b = urlBase64ToUint8Array(clave);
+            return a.length === b.length && a.every((v, i) => v === b[i]);
+        } catch (e) { return true; }
+    }
+
     async function obtenerClavePublica() {
         const res = await fetch('/push/vapid_public');
         const dat = await res.json();
@@ -41,6 +51,11 @@
         if (!clave) return { ok: false, motivo: 'sin-vapid' };
 
         let sub = await registro.pushManager.getSubscription();
+        if (sub && !mismaClave(sub, clave)) {
+            // Suscripción hecha con otras claves → rehacerla
+            try { await sub.unsubscribe(); } catch (e) { /* ignorar */ }
+            sub = null;
+        }
         if (!sub) {
             sub = await registro.pushManager.subscribe({
                 userVisibleOnly: true,
