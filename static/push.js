@@ -78,7 +78,7 @@
         btn.id = 'btn-activar-alertas';
         btn.textContent = '🔔 Activar alertas de pedidos';
         btn.style.cssText = [
-            'position:fixed', 'right:16px', 'bottom:16px', 'z-index:10000',
+            'position:fixed', 'left:16px', 'bottom:16px', 'z-index:10000',
             'background:#f59e0b', 'color:#111', 'border:none', 'border-radius:999px',
             'padding:12px 18px', 'font-weight:800', 'font-size:15px', 'cursor:pointer',
             'box-shadow:0 8px 24px rgba(0,0,0,.25)', 'max-width:calc(100vw - 32px)'
@@ -102,30 +102,72 @@
         }
     }
 
+    async function probar() {
+        const res = await fetch('/push/probar', { method: 'POST' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+    }
+
+    function explicarPrueba(d) {
+        if (!d.push_disponible) return 'El servidor no tiene instalada la librería de notificaciones (pywebpush).';
+        if (!d.claves_vapid) return 'El servidor no tiene claves de notificación (VAPID).';
+        if (!d.dispositivos) return 'Este usuario (' + d.usuario + ') no tiene ningún dispositivo registrado. Toca "Activar alertas" otra vez.';
+        if (d.enviadas) {
+            return '✅ Prueba enviada a ' + d.enviadas + ' dispositivo(s) de ' + d.usuario + '.\n\n' +
+                   'Si no te apareció ni sonó, revisa en el teléfono: notificaciones permitidas para el navegador/app, ' +
+                   'modo silencio o "No molestar" apagado y ahorro de batería desactivado para el navegador.' +
+                   (d.errores.length ? '\n\nOtros dispositivos con error: ' + d.errores.join(' | ') : '');
+        }
+        return 'No se pudo entregar la notificación: ' + d.errores.join(' | ');
+    }
+
+    function modoProbar(btn) {
+        btn.disabled = false;
+        btn.textContent = '🔔 Probar alerta';
+        btn.style.background = '#1f2937';
+        btn.style.color = '#fff';
+        btn.style.padding = '8px 14px';
+        btn.style.fontSize = '13px';
+        btn.style.opacity = '0.85';
+        btn.dataset.modo = 'probar';
+    }
+
     async function iniciar() {
-        // Si ya hay permiso, suscribir en silencio (renueva la suscripción en el servidor)
+        const btn = crearBoton();
+
+        // Si ya hay permiso, suscribir en silencio (renueva la suscripción y el usuario en el servidor)
         if (soportado && Notification.permission === 'granted') {
             try {
                 const r = await suscribir(false);
-                if (r.ok) return;
-            } catch (e) { /* mostrar botón */ }
+                if (r.ok) modoProbar(btn);
+            } catch (e) { /* queda el botón de activar */ }
         }
 
-        const btn = crearBoton();
         btn.addEventListener('click', async () => {
             btn.disabled = true;
+            if (btn.dataset.modo === 'probar') {
+                btn.textContent = 'Enviando prueba…';
+                try {
+                    // volver a registrar por si cambió el usuario o la suscripción
+                    await suscribir(false);
+                    alert(explicarPrueba(await probar()));
+                } catch (e) {
+                    alert('No se pudo hacer la prueba: ' + e.message);
+                }
+                modoProbar(btn);
+                return;
+            }
+
             btn.textContent = 'Activando…';
             let r;
-            try { r = await suscribir(true); } catch (e) { r = { ok: false, motivo: 'error' }; }
+            try { r = await suscribir(true); } catch (e) { r = { ok: false, motivo: 'error', detalle: e.message }; }
             if (r.ok) {
-                btn.textContent = '✅ Alertas activadas';
-                btn.style.background = '#10b981';
-                btn.style.color = '#fff';
-                setTimeout(() => btn.remove(), 2500);
+                modoProbar(btn);
+                try { alert(explicarPrueba(await probar())); } catch (e) { /* ignorar */ }
             } else {
                 btn.disabled = false;
                 btn.textContent = '🔔 Activar alertas de pedidos';
-                alert(mensaje(r.motivo));
+                alert(mensaje(r.motivo) + (r.detalle ? '\n\n(' + r.detalle + ')' : ''));
             }
         });
     }

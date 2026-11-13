@@ -1717,6 +1717,60 @@ def actualizar_estado(pedido_id, estado):
     return redirect(request.referrer or url_for('dashboard'))
 
 
+def _enviar_a_destinos(destinos, data):
+    """
+    Envía el mensaje push a cada suscripción. Elimina las que el servicio
+    de push reporta como vencidas. Devuelve lista de (endpoint, ok, detalle).
+    """
+    _, vapid_privada = obtener_claves_vapid_sin_contexto()
+    resultados = []
+    expiradas = []
+    for destino in destinos:
+        try:
+            resp = webpush(
+                subscription_info=destino,
+                data=data,
+                vapid_private_key=vapid_privada,
+                vapid_claims=dict(VAPID_CLAIMS),
+                ttl=3600,
+                headers={"Urgency": "high"},  # entrega inmediata aunque el teléfono esté en reposo
+            )
+            codigo = getattr(resp, 'status_code', 201)
+            resultados.append((destino["endpoint"], True, f"HTTP {codigo}"))
+        except WebPushException as ex:
+            codigo = ex.response.status_code if ex.response is not None else None
+            if codigo in (404, 410):
+                expiradas.append(destino["endpoint"])
+            cuerpo = ''
+            try:
+                cuerpo = ex.response.text[:200] if ex.response is not None else ''
+            except Exception:
+                pass
+            logging.warning(f"Error enviando push ({codigo}): {ex} {cuerpo}")
+            resultados.append((destino["endpoint"], False, f"HTTP {codigo}: {cuerpo or ex}"))
+        except Exception as ex:
+            logging.warning(f"Error enviando push: {ex}")
+            resultados.append((destino["endpoint"], False, str(ex)))
+    if expiradas:
+        with app.app_context():
+            try:
+                PushSubscripcion.query.filter(
+                    PushSubscripcion.endpoint.in_(expiradas)
+                ).delete(synchronize_session=False)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+    return resultados
+
+
+def obtener_claves_vapid_sin_contexto():
+    """obtener_claves_vapid() utilizable también desde hilos sin contexto de app."""
+    if _vapid_cache or (VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY):
+        return obtener_claves_vapid()
+    with app.app_context():
+        return obtener_claves_vapid()
+
+
 def _enviar_push(roles, payload, excluir_usuario_id=None):
     """
     Envía una notificación push a todos los dispositivos suscritos de usuarios
@@ -1743,38 +1797,7 @@ def _enviar_push(roles, payload, excluir_usuario_id=None):
         return
 
     data = json.dumps(payload)
-
-    def _enviar():
-        expiradas = []
-        for destino in destinos:
-            try:
-                webpush(
-                    subscription_info=destino,
-                    data=data,
-                    vapid_private_key=vapid_privada,
-                    vapid_claims=dict(VAPID_CLAIMS),
-                    ttl=3600,
-                    headers={"Urgency": "high"},  # entrega inmediata aunque el teléfono esté en reposo
-                )
-            except WebPushException as ex:
-                # Suscripción expirada o inválida → eliminar
-                if ex.response is not None and ex.response.status_code in (404, 410):
-                    expiradas.append(destino["endpoint"])
-                else:
-                    logging.warning(f"Error enviando push: {ex}")
-            except Exception as ex:
-                logging.warning(f"Error enviando push: {ex}")
-        if expiradas:
-            with app.app_context():
-                try:
-                    PushSubscripcion.query.filter(
-                        PushSubscripcion.endpoint.in_(expiradas)
-                    ).delete(synchronize_session=False)
-                    db.session.commit()
-                except Exception:
-                    db.session.rollback()
-
-    threading.Thread(target=_enviar, daemon=True).start()
+    threading.Thread(target=_enviar_a_destinos, args=(destinos, data), daemon=True).start()
 
 
 def _enviar_push_pedido_listo(pedido):
@@ -1849,6 +1872,7 @@ def push_suscribir():
     if sub:
         sub.p256dh = p256dh
         sub.auth   = auth
+        sub.usuario_id = current_user.id  # el dispositivo pasa al usuario que tiene la sesión abierta
     else:
         sub = PushSubscripcion(
             usuario_id=current_user.id,
@@ -1859,6 +1883,44 @@ def push_suscribir():
         db.session.add(sub)
     db.session.commit()
     return jsonify({'ok': True})
+
+
+@app.route('/push/probar', methods=['POST'])
+@login_required
+def push_probar():
+    """
+    Envía una notificación de prueba a los dispositivos del usuario actual
+    (de forma inmediata) y devuelve un diagnóstico.
+    """
+    publica, privada = obtener_claves_vapid()
+    diag = {
+        'push_disponible': PUSH_DISPONIBLE,
+        'claves_vapid': bool(publica and privada),
+        'usuario': current_user.username,
+        'rol': current_user.rol,
+        'dispositivos': 0,
+        'enviadas': 0,
+        'errores': [],
+    }
+    if not PUSH_DISPONIBLE or not privada:
+        return jsonify(diag)
+
+    subs = PushSubscripcion.query.filter_by(usuario_id=current_user.id).all()
+    diag['dispositivos'] = len(subs)
+    destinos = [{"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}} for s in subs]
+    data = json.dumps({
+        "tipo":  "nuevo_pedido",
+        "title": "🔔 Prueba de alerta",
+        "body":  "Si ves esto y sonó, las alertas de pedidos funcionan en este dispositivo.",
+        "url":   "/dashboard",
+        "tag":   f"prueba-{int(datetime.now().timestamp() * 1000)}",
+    })
+    for endpoint, ok, detalle in _enviar_a_destinos(destinos, data):
+        if ok:
+            diag['enviadas'] += 1
+        else:
+            diag['errores'].append(detalle)
+    return jsonify(diag)
 
 
 @app.route('/push/desuscribir', methods=['POST'])
